@@ -78,7 +78,7 @@ export default function TenantDashboard() {
     return Array.from(set).sort().reverse().map((k) => { const [y, m] = k.split("-").map(Number); return { y, m }; });
   }, [sales]);
 
-  if (loading) return <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  const prevMonthLabel = MONTHS[(month === 1 ? 12 : month - 1) - 1].toLowerCase();
 
   return (
     <div className="p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto">
@@ -101,12 +101,12 @@ export default function TenantDashboard() {
         </Select>
       </div>
 
-      {/* Headline KPIs */}
+      {/* Headline KPIs — Premium Flat */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard icon={DollarSign} label="Faturamento" value={BRL(total)} delta={varTotal} accent />
-        <KpiCard icon={ShoppingBag} label="Nº de Vendas" value={count.toString()} delta={varCount} />
-        <KpiCard icon={Receipt} label="Ticket Médio" value={BRL(avg)} delta={varTicket} />
-        <KpiCard icon={Trophy} label="Maior Venda" value={maxSale ? BRL(maxSale.amount) : "—"} sub={maxSale?.patient_name} />
+        <KpiPremium icon={DollarSign} label="Faturamento" value={total ? BRL(total) : null} delta={varTotal} loading={loading} prevLabel={prevMonthLabel} />
+        <KpiPremium icon={ShoppingBag} label="Nº de Vendas" value={count ? count.toString() : null} delta={varCount} loading={loading} prevLabel={prevMonthLabel} />
+        <KpiPremium icon={Receipt} label="Ticket Médio" value={avg ? BRL(avg) : null} delta={varTicket} loading={loading} prevLabel={prevMonthLabel} />
+        <KpiPremium icon={Trophy} label="Maior Venda" value={maxSale ? BRL(maxSale.amount) : null} sub={maxSale?.patient_name} loading={loading} />
       </div>
 
       {/* Goals */}
