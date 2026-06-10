@@ -337,3 +337,19 @@ function BreakdownCard({ title, rows, total }: { title: string; rows: { name: st
     </Card>
   );
 }
+
+function Stat({ label, value, hint, good, bad }: { label: string; value: string; hint?: string; good?: boolean; bad?: boolean }) {
+  return (
+    <div className="p-3 rounded-xl bg-muted/30 border border-border/60">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="font-display text-2xl num mt-1 leading-none">{value}</div>
+      {hint && (
+        <div className={`text-xs mt-2 flex items-center gap-1 num ${good ? "text-emerald-400" : bad ? "text-rose-400" : "text-muted-foreground"}`}>
+          {good && <CheckCircle2 className="w-3 h-3" />}
+          {bad && <AlertTriangle className="w-3 h-3" />}
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
