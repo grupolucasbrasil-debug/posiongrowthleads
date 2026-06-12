@@ -7,9 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Plus, ExternalLink, Building2 } from "lucide-react";
+import { Loader2, Plus, ExternalLink, Building2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { TenantUsersDialog } from "@/components/admin/TenantUsersDialog";
 
 interface Tenant { id: string; slug: string; name: string; plan: string; status: string; segment: string | null; created_at: string }
 
@@ -20,6 +21,7 @@ export default function TenantsPage() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [creating, setCreating] = useState(false);
+  const [usersFor, setUsersFor] = useState<Tenant | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -94,9 +96,14 @@ export default function TenantsPage() {
                     <TableCell><Badge className={t.status === "active" ? "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/20" : ""}>{t.status}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{new Date(t.created_at).toLocaleDateString("pt-BR")}</TableCell>
                     <TableCell className="text-right">
-                      <Button asChild size="sm" variant="outline" className="gap-2">
-                        <Link to={`/app/${t.slug}/dashboard`}><ExternalLink className="w-3 h-3" /> Abrir</Link>
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" className="gap-2" onClick={() => setUsersFor(t)}>
+                          <Users className="w-3 h-3" /> Usuários
+                        </Button>
+                        <Button asChild size="sm" variant="outline" className="gap-2">
+                          <Link to={`/app/${t.slug}/dashboard`}><ExternalLink className="w-3 h-3" /> Abrir</Link>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -105,6 +112,13 @@ export default function TenantsPage() {
           )}
         </CardContent>
       </Card>
+
+      <TenantUsersDialog
+        tenantId={usersFor?.id ?? null}
+        tenantName={usersFor?.name ?? ""}
+        open={!!usersFor}
+        onOpenChange={(v) => !v && setUsersFor(null)}
+      />
     </div>
   );
 }
