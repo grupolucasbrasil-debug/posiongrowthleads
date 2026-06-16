@@ -192,7 +192,95 @@ function ConfigTab() {
         </div>
       </div>
 
+      {/* Testar Graph API */}
+      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-semibold text-foreground">3. Testar Graph API</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Valida o <code className="bg-muted px-1 rounded">FACEBOOK_PAGE_ACCESS_TOKEN</code> e lista os formulários de Lead Ads disponíveis.
+            </p>
+          </div>
+          <Button onClick={runGraphTest} disabled={testing} className="gradient-accent">
+            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            <span className="ml-2">Testar token</span>
+          </Button>
+        </div>
+
+        {testResult && (
+          <div className={`rounded-lg border p-4 text-sm ${testResult.ok ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}`}>
+            {!testResult.ok && (
+              <div className="text-red-400">
+                <b>Erro:</b> {testResult.error}
+              </div>
+            )}
+            {testResult.ok && (
+              <div className="space-y-3">
+                <div className="text-emerald-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4" /> Token válido ({testResult.tokenType === "page" ? "Page Token" : "User Token"})
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  <b>Conta:</b> {testResult.me?.name} <span className="opacity-60">({testResult.me?.id})</span>
+                  {testResult.me?.category && <> · <b>Categoria:</b> {testResult.me.category}</>}
+                </div>
+
+                {testResult.pages?.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-foreground mb-1">Páginas acessíveis ({testResult.pages.length})</div>
+                    <ul className="text-xs text-muted-foreground space-y-1">
+                      {testResult.pages.map((p: any) => (
+                        <li key={p.id}>• {p.name} <span className="opacity-50">({p.id})</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div>
+                  <div className="text-xs font-semibold text-foreground mb-1">
+                    Formulários de Lead Ads ({testResult.forms?.length ?? 0})
+                  </div>
+                  {testResult.formsError && (
+                    <div className="text-xs text-amber-400 mb-2">{testResult.formsError}</div>
+                  )}
+                  {testResult.forms?.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead className="text-muted-foreground">
+                          <tr className="border-b border-border/40">
+                            <th className="text-left py-1 pr-3 font-medium">Form</th>
+                            <th className="text-left py-1 pr-3 font-medium">ID</th>
+                            <th className="text-left py-1 pr-3 font-medium">Status</th>
+                            <th className="text-left py-1 pr-3 font-medium">Leads</th>
+                            {testResult.tokenType === "user" && <th className="text-left py-1 pr-3 font-medium">Página</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {testResult.forms.map((f: any) => (
+                            <tr key={f.id} className="border-b border-border/20">
+                              <td className="py-1 pr-3 text-foreground">{f.name}</td>
+                              <td className="py-1 pr-3 font-mono opacity-70">{f.id}</td>
+                              <td className="py-1 pr-3">
+                                <Badge variant={f.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px]">{f.status}</Badge>
+                              </td>
+                              <td className="py-1 pr-3">{f.leads_count ?? "—"}</td>
+                              {testResult.tokenType === "user" && <td className="py-1 pr-3 opacity-70">{f.page_name ?? "—"}</td>}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Nenhum formulário retornado. Verifique permissões <code className="bg-muted px-1 rounded">leads_retrieval</code> + <code className="bg-muted px-1 rounded">pages_show_list</code>.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Guia Zapier */}
+
       <div className="bg-accent/5 border border-accent/20 rounded-xl p-6 space-y-3">
         <h2 className="font-semibold text-foreground flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Como conectar via Zapier (5 min)</h2>
         <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
