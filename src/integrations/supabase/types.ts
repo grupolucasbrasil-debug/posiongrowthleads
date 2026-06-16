@@ -590,6 +590,7 @@ export type Database = {
           fechado_em: string | null
           id: string
           investiu_trafego: string | null
+          is_organic: boolean
           ja_realizou_procedimento: string | null
           motivo_perda: string | null
           mql: boolean | null
@@ -629,6 +630,7 @@ export type Database = {
           fechado_em?: string | null
           id?: string
           investiu_trafego?: string | null
+          is_organic?: boolean
           ja_realizou_procedimento?: string | null
           motivo_perda?: string | null
           mql?: boolean | null
@@ -668,6 +670,7 @@ export type Database = {
           fechado_em?: string | null
           id?: string
           investiu_trafego?: string | null
+          is_organic?: boolean
           ja_realizou_procedimento?: string | null
           motivo_perda?: string | null
           mql?: boolean | null
