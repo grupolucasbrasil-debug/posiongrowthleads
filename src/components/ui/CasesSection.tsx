@@ -27,11 +27,12 @@ const CasesSection = () => {
     <section className="py-20 md:py-24 px-4 relative">
       <div className="container mx-auto max-w-6xl">
         {/* Featured */}
-        <div className="card-elevated p-8 md:p-12 mb-10 relative overflow-hidden">
+        <div data-reveal className="reveal card-elevated p-8 md:p-12 mb-10 relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-80 h-80 bg-accent/10 rounded-full blur-[100px] pointer-events-none" />
           <div className="grid md:grid-cols-[auto_1fr_auto] gap-8 items-center relative z-10">
             <div className="flex flex-col items-center gap-3">
-              <div className="w-28 h-28 rounded-full overflow-hidden ring-4 ring-accent/40 shadow-2xl">
+              <div className="float-soft w-28 h-28 rounded-full overflow-hidden ring-4 ring-accent/40 shadow-2xl relative">
+                <div className="absolute -inset-3 rounded-full bg-accent/25 blur-2xl -z-10" />
                 <img src={featured.photo} alt={featured.name} className="w-full h-full object-cover" />
               </div>
               <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Caso destaque</span>
@@ -55,8 +56,14 @@ const CasesSection = () => {
 
         {/* Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {cases.map((c) => (
-            <div key={c.name} className="card-tech p-6">
+          {cases.map((c, i) => (
+            <div
+              key={c.name}
+              data-reveal
+              data-reveal-delay={String(i * 80)}
+              className="reveal card-tech p-6 hover:-translate-y-2 hover:scale-[1.015] transition-all duration-300"
+              style={{ transitionTimingFunction: "cubic-bezier(.22,.61,.36,1)" }}
+            >
               <div className="flex items-center gap-4 mb-4">
                 <div className="w-14 h-14 rounded-full overflow-hidden ring-2 ring-accent/30 shadow-lg flex-shrink-0">
                   <img src={c.photo} alt={c.name} className="w-full h-full object-cover" />
