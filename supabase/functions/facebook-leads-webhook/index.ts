@@ -86,7 +86,7 @@ async function insertLead(payload: Record<string, string>, meta: {
     facebook_form_name: meta.facebook_form_name,
     facebook_ad_name: meta.facebook_ad_name,
     facebook_adset_name: meta.facebook_adset_name,
-    notes,
+    observacoes,
     utm_source: "facebook",
     utm_medium: "lead_ads",
     utm_campaign: meta.facebook_campaign ?? meta.facebook_ad_name ?? null,
