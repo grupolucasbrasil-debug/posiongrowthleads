@@ -172,15 +172,19 @@ function ConfigTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [steps, setSteps] = useState<ValidationStep[] | null>(null);
 
-  // form inputs (apenas para envio — token nunca volta do server)
+  // form inputs
   const [verifyToken, setVerifyToken] = useState("");
-  const [pageAccessToken, setPageAccessToken] = useState("");
+  const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
-  const [pageId, setPageId] = useState("");
-  const [showPat, setShowPat] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+
+  // page picker
+  const [pages, setPages] = useState<FbPage[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [savingPage, setSavingPage] = useState<string | null>(null);
 
   const loadMeta = async () => {
     const { data } = await supabase.rpc("get_facebook_config_meta" as any);
@@ -188,7 +192,7 @@ function ConfigTab() {
     if (row) {
       setMeta(row as ConfigMeta);
       setVerifyToken(row.verify_token ?? "");
-      setPageId(row.page_id ?? "");
+      setAppId(row.app_id ?? "");
       if (row.last_validation_result) setSteps(row.last_validation_result as ValidationStep[]);
     }
     setLoading(false);
@@ -207,7 +211,7 @@ function ConfigTab() {
     toast.success(`${label} copiado`);
   };
 
-  const saveAll = async () => {
+  const saveCredentials = async () => {
     if (verifyToken && verifyToken.length < 12) {
       toast.error("Verify Token precisa ter pelo menos 12 caracteres");
       return;
@@ -216,20 +220,93 @@ function ConfigTab() {
     try {
       const payload: Record<string, any> = {};
       if (verifyToken) payload.verify_token = verifyToken;
-      if (pageAccessToken) payload.page_access_token = pageAccessToken;
+      if (appId.trim()) payload.app_id = appId.trim();
       if (appSecret) payload.app_secret = appSecret;
-      if (pageId !== (meta?.page_id ?? "")) payload.page_id = pageId;
 
       const { error } = await supabase.functions.invoke("facebook-config-save", { body: payload });
       if (error) throw error;
       toast.success("Credenciais salvas");
-      setPageAccessToken("");
       setAppSecret("");
       await loadMeta();
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleFacebookLogin = async () => {
+    if (!meta?.app_id) {
+      toast.error("Salve primeiro o App ID e o App Secret");
+      return;
+    }
+    setConnecting(true);
+    try {
+      const FB = await loadFbSdk(meta.app_id);
+      const resp: any = await new Promise((resolve) => {
+        FB.login(resolve, { scope: FB_SCOPES, return_scopes: true });
+      });
+      if (!resp?.authResponse?.accessToken) {
+        toast.error("Login com Facebook cancelado ou negado");
+        return;
+      }
+      const shortToken = resp.authResponse.accessToken;
+
+      const { data, error } = await supabase.functions.invoke("facebook-oauth-exchange", {
+        body: { short_lived_token: shortToken },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error ?? "Falha no servidor");
+      if (!data.pages?.length) {
+        toast.error("Sua conta não administra nenhuma página. Crie/seja admin de uma página antes de conectar.");
+        return;
+      }
+      setPages(data.pages);
+      setPickerOpen(true);
+    } catch (e: any) {
+      toast.error(e.message ?? "Falha ao conectar");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const selectPage = async (page: FbPage) => {
+    setSavingPage(page.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("facebook-oauth-save-page", {
+        body: {
+          page_id: page.id,
+          page_name: page.name,
+          page_access_token: page.access_token,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error ?? "Falha ao salvar");
+      if (data.subscribed) toast.success(`Conectado a ${page.name} · inscrição leadgen criada`);
+      else toast.success(`Conectado a ${page.name}`, {
+        description: data.subscribeError ? `Aviso: ${data.subscribeError}` : undefined,
+      });
+      setPickerOpen(false);
+      setPages(null);
+      await loadMeta();
+    } catch (e: any) {
+      toast.error(e.message ?? "Falha ao salvar página");
+    } finally {
+      setSavingPage(null);
+    }
+  };
+
+  const disconnect = async () => {
+    if (!confirm("Desconectar a página? O webhook deixará de receber leads até reconectar.")) return;
+    try {
+      const { error } = await supabase.functions.invoke("facebook-config-save", {
+        body: { clear_page_access_token: true },
+      });
+      if (error) throw error;
+      toast.success("Página desconectada");
+      await loadMeta();
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao desconectar");
     }
   };
 
@@ -250,6 +327,8 @@ function ConfigTab() {
   };
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-accent" /></div>;
+
+  const isConnected = meta?.has_page_access_token && meta?.connected_page_name;
 
   return (
     <div className="space-y-6">
@@ -274,43 +353,35 @@ function ConfigTab() {
         </div>
       </div>
 
-      {/* Credenciais Meta */}
+      {/* Credenciais do App Meta */}
       <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
         <div>
           <h2 className="font-semibold text-foreground flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-accent" /> 3. Credenciais Meta
+            <KeyRound className="w-4 h-4 text-accent" /> 3. Credenciais do App Meta
           </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Cole aqui o <b>Page Access Token</b> (longa duração, com permissão <code className="bg-muted px-1 rounded">leads_retrieval</code>).
-            Tokens ficam guardados criptografados e <b>nunca</b> aparecem de volta na tela — apenas o status.
+            Cole o <b>App ID</b> e <b>App Secret</b> do seu app criado em{" "}
+            <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" className="text-accent underline">developers.facebook.com/apps</a>.
+            São necessários para o botão "Conectar com Facebook" funcionar.
           </p>
         </div>
 
-        {/* Page Access Token */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-foreground flex items-center gap-2">
-            Page Access Token
-            {meta?.has_page_access_token && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">salvo</Badge>}
+            App ID
+            {meta?.app_id && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">{meta.app_id}</Badge>}
           </label>
-          <div className="flex gap-2">
-            <Input
-              type={showPat ? "text" : "password"}
-              value={pageAccessToken}
-              onChange={(e) => setPageAccessToken(e.target.value)}
-              placeholder={meta?.has_page_access_token ? "•••••••• (deixe vazio para manter)" : "cole o token aqui"}
-              className="font-mono text-xs"
-              autoComplete="off"
-            />
-            <Button variant="outline" onClick={() => setShowPat(s => !s)} type="button">
-              {showPat ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </Button>
-          </div>
+          <Input
+            value={appId}
+            onChange={(e) => setAppId(e.target.value)}
+            placeholder="ex: 1234567890123456"
+            className="font-mono text-xs"
+          />
         </div>
 
-        {/* App Secret */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-foreground flex items-center gap-2">
-            App Secret <span className="opacity-60 font-normal">(opcional — valida X-Hub-Signature-256)</span>
+            App Secret
             {meta?.has_app_secret && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">salvo</Badge>}
           </label>
           <div className="flex gap-2">
@@ -328,28 +399,73 @@ function ConfigTab() {
           </div>
         </div>
 
-        {/* Page ID */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-foreground">Page ID <span className="opacity-60 font-normal">(opcional)</span></label>
-          <Input
-            value={pageId}
-            onChange={(e) => setPageId(e.target.value)}
-            placeholder="ex: 102345678901234"
-            className="font-mono text-xs"
-          />
+        <Button onClick={saveCredentials} disabled={saving} className="gradient-accent">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+          <span className="ml-2">Salvar credenciais do App</span>
+        </Button>
+      </div>
+
+      {/* Conectar com Facebook */}
+      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-foreground flex items-center gap-2">
+            <Facebook className="w-4 h-4 text-blue-500" /> 4. Conectar conta do Facebook
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Faça login com sua conta Meta, escolha a página de negócios e o sistema cuida do resto
+            (Page Access Token de longa duração, inscrição no webhook leadgen, etc).
+          </p>
         </div>
 
-        <Button onClick={saveAll} disabled={saving} className="gradient-accent">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-          <span className="ml-2">Salvar credenciais</span>
-        </Button>
+        {isConnected ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <div>
+                <div className="text-sm font-semibold text-foreground">{meta?.connected_page_name}</div>
+                <div className="text-xs text-muted-foreground">
+                  Page ID: <span className="font-mono">{meta?.page_id}</span>
+                  {meta?.token_expires_at && (
+                    <span className="ml-2">· token válido até {new Date(meta.token_expires_at).toLocaleDateString("pt-BR")}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleFacebookLogin} disabled={connecting}>
+                {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                <span className="ml-2">Reconectar</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={disconnect} className="text-red-400 hover:text-red-300">
+                <Unplug className="w-4 h-4 mr-1" /> Desconectar
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            onClick={handleFacebookLogin}
+            disabled={connecting || !meta?.app_id || !meta?.has_app_secret}
+            className="bg-[#1877F2] hover:bg-[#1665d8] text-white"
+            size="lg"
+          >
+            {connecting ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
+            <span className="ml-2">Conectar com Facebook</span>
+          </Button>
+        )}
+
+        {(!meta?.app_id || !meta?.has_app_secret) && !isConnected && (
+          <p className="text-xs text-amber-300 flex items-start gap-1">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            Salve o App ID e o App Secret no passo 3 antes de conectar.
+          </p>
+        )}
       </div>
 
       {/* Validação ponta-a-ponta */}
       <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="font-semibold text-foreground">4. Validar webhook completo</h2>
+            <h2 className="font-semibold text-foreground">5. Validar webhook completo</h2>
             <p className="text-xs text-muted-foreground mt-1">
               Executa 6 checagens: Verify Token, handshake da Meta, token de página, permissões, formulários de Lead Ads e App Secret.
             </p>
@@ -374,18 +490,54 @@ function ConfigTab() {
 
       {/* Guia rápido */}
       <div className="bg-accent/5 border border-accent/20 rounded-xl p-6 space-y-3">
-        <h2 className="font-semibold text-foreground">Como configurar no painel da Meta</h2>
+        <h2 className="font-semibold text-foreground">Configuração do App no painel da Meta (uma vez só)</h2>
         <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-          <li>Crie um App em <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="text-accent underline">developers.facebook.com</a> (tipo Business) e gere um <b>Page Access Token de longa duração</b> com as permissões <code className="bg-muted px-1 rounded">leads_retrieval</code>, <code className="bg-muted px-1 rounded">pages_show_list</code> e <code className="bg-muted px-1 rounded">pages_manage_metadata</code>.</li>
-          <li>Cole o token (e opcionalmente o App Secret) no formulário acima e clique em <b>Salvar credenciais</b>.</li>
-          <li>No App → <b>Webhooks → Page</b>, adicione subscription para o campo <code className="bg-muted px-1 rounded">leadgen</code>. Use a <b>URL do Webhook</b> (passo 1) e o <b>Verify Token</b> (passo 2).</li>
-          <li>Assine a Página ao App via Graph API:
-            <code className="block bg-muted/40 rounded p-2 mt-1 text-xs break-all">POST /v21.0/&#123;page-id&#125;/subscribed_apps?subscribed_fields=leadgen&access_token=&#123;page_token&#125;</code>
-          </li>
-          <li>Clique em <b>Validar agora</b> e confira que todos os passos ficaram verdes.</li>
-          <li>Envie o app para <b>App Review</b> (Meta) com as permissões acima — sem isso, só leads de testers chegam.</li>
+          <li>Em <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" className="text-accent underline">developers.facebook.com/apps</a>, crie um App tipo <b>Business</b> (ou use o "Posion Leads").</li>
+          <li>Em <b>App settings → Basic</b>, copie o <b>App ID</b> e <b>App Secret</b> e cole no passo 3 acima.</li>
+          <li>Adicione o produto <b>Facebook Login → Web</b> e em <b>Valid OAuth Redirect URIs</b> adicione: <code className="bg-muted px-1 rounded">{typeof window !== "undefined" ? window.location.origin : ""}/</code></li>
+          <li>Em <b>App settings → Basic → App Domains</b> adicione: <code className="bg-muted px-1 rounded">{typeof window !== "undefined" ? window.location.hostname : ""}</code></li>
+          <li>Em <b>Webhooks → Page</b>, adicione subscription para <code className="bg-muted px-1 rounded">leadgen</code> usando a URL (passo 1) e o Verify Token (passo 2).</li>
+          <li>Clique em <b>Conectar com Facebook</b> (passo 4) — pronto.</li>
+          <li>Para receber leads de qualquer usuário (não só testers), envie o app para <b>App Review</b> com as permissões <code className="bg-muted px-1 rounded">leads_retrieval</code> + <code className="bg-muted px-1 rounded">pages_show_list</code> + <code className="bg-muted px-1 rounded">pages_manage_metadata</code>.</li>
         </ol>
       </div>
+
+      {/* Page picker dialog */}
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Escolha a página</DialogTitle>
+            <DialogDescription>
+              Selecione a página de negócios que receberá os leads. Você pode reconectar e trocar a qualquer momento.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {pages?.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => selectPage(p)}
+                disabled={!!savingPage}
+                className="w-full text-left rounded-lg border border-border/50 hover:border-accent/50 bg-card hover:bg-accent/5 p-3 transition disabled:opacity-50"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-medium text-foreground text-sm">{p.name}</div>
+                    <div className="text-xs text-muted-foreground">{p.category ?? "—"} · <span className="font-mono">{p.id}</span></div>
+                  </div>
+                  {savingPage === p.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-accent" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPickerOpen(false)} disabled={!!savingPage}>Cancelar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
