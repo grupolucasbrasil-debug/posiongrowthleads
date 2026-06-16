@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Search, Download, Loader2, Phone, Mail, Building2, MapPin } from "lucide-react";
+import { Search, Download, Loader2, Phone, Mail, Building2, MapPin, Facebook, Bug } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
