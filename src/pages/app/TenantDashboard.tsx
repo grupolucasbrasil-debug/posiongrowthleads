@@ -24,10 +24,25 @@ const FUNNEL_COLORS = ["#60A5FA", "#A78BFA", "#F472B6", "#FBBF24", "#34D399"];
 export default function TenantDashboard() {
   const { tenant } = useTenant();
   const [sales, setSales] = useState<SaleRow[]>([]);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(5);
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+
+  // Investimento mensal (armazenado localmente por tenant+ano-mês)
+  const invKey = tenant ? `posion:invest:${tenant.id}:${year}-${month}` : "";
+  const [investment, setInvestment] = useState<number>(0);
+  useEffect(() => {
+    if (!invKey) return;
+    const v = Number(localStorage.getItem(invKey) || 0);
+    setInvestment(isFinite(v) ? v : 0);
+  }, [invKey]);
+  const saveInvestment = (v: number) => {
+    setInvestment(v);
+    if (invKey) localStorage.setItem(invKey, String(v));
+  };
 
   useEffect(() => {
     if (!tenant) return;
@@ -35,9 +50,11 @@ export default function TenantDashboard() {
     Promise.all([
       supabase.from("sales").select("*").eq("tenant_id", tenant.id).order("sale_date", { ascending: true }),
       supabase.from("monthly_goals").select("*").eq("tenant_id", tenant.id),
-    ]).then(([s, g]) => {
+      supabase.from("clinic_leads").select("id,stage,created_at").eq("tenant_id", tenant.id),
+    ]).then(([s, g, l]) => {
       setSales((s.data || []) as SaleRow[]);
       setGoals((g.data || []) as Goal[]);
+      setLeads((l.data || []) as LeadRow[]);
       setLoading(false);
     });
   }, [tenant]);
