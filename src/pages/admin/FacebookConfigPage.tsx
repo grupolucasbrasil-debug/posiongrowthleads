@@ -493,6 +493,58 @@ function ConfigTab() {
         )}
       </div>
 
+      {/* 4b. Marketing API / Auto-sync */}
+      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-foreground flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-accent" /> 4b. Marketing API — campanhas automáticas
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Informe o <b>Ad Account ID</b> (encontra em <a href="https://business.facebook.com/settings/ad-accounts" target="_blank" rel="noreferrer" className="text-accent underline">Business → Contas de anúncio</a>, no formato <code className="bg-muted px-1 rounded">act_123456789</code>) e
+            opcionalmente vincule uma clínica padrão para receber os gastos. Permissões do token: <code className="bg-muted px-1 rounded">ads_read</code> (reconecte se necessário).
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Ad Account ID</label>
+            <Input
+              value={adAccountId}
+              onChange={(e) => setAdAccountId(e.target.value)}
+              placeholder="act_1234567890123456"
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Clínica padrão (opcional)</label>
+            <select
+              value={defaultTenantId}
+              onChange={(e) => setDefaultTenantId(e.target.value)}
+              className="w-full h-10 px-3 rounded-md bg-background border border-input text-xs"
+            >
+              <option value="">— Nenhuma (global) —</option>
+              {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={saveCredentials} disabled={saving} variant="outline" size="sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            <span className="ml-2">Salvar Ad Account</span>
+          </Button>
+          <Button onClick={syncCampaigns} disabled={syncingCamp || !meta?.ad_account_id} className="gradient-accent" size="sm">
+            {syncingCamp ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <span className="ml-2">Sincronizar campanhas agora</span>
+          </Button>
+          {meta?.last_campaigns_sync_at && (
+            <span className="text-[11px] text-muted-foreground">
+              Última sincronização: {new Date(meta.last_campaigns_sync_at).toLocaleString("pt-BR")}
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Validação ponta-a-ponta */}
       <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
