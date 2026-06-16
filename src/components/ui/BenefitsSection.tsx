@@ -37,7 +37,7 @@ const BenefitsSection = () => {
   return (
     <section className="py-20 md:py-28 px-4 relative">
       <div className="container mx-auto max-w-6xl">
-        <div className="text-center mb-14">
+        <div data-reveal className="reveal text-center mb-14">
           <p className="text-[11px] uppercase tracking-[0.3em] text-accent/90 mb-4">Mas você precisa de nós?</p>
           <h2 className="font-display text-3xl md:text-4xl lg:text-5xl text-foreground max-w-3xl mx-auto leading-tight">
             Os três pilares que <span className="gold-gradient-text">transformam</span> uma clínica em uma operação de alto valor.
@@ -48,8 +48,9 @@ const BenefitsSection = () => {
           {pillars.map((p, i) => (
             <div
               key={p.title}
-              className="card-tech pillar-hover p-7 animate-fade-in-up"
-              style={{ animationDelay: `${i * 0.1}s` }}
+              data-reveal
+              data-reveal-delay={String(i * 100)}
+              className="reveal card-tech pillar-hover p-7"
             >
               <div className="w-12 h-12 bg-accent/10 border border-accent/30 rounded-xl flex items-center justify-center mb-5">
                 <p.icon className="w-6 h-6 text-accent" strokeWidth={1.5} />
