@@ -69,12 +69,73 @@ export default function CampanhasPage() {
     notes: "",
   });
 
+  // Facebook Ads sync state
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [permState, setPermState] = useState<{ ok: boolean; granted: string[]; missing: string[]; checking: boolean }>({
+    ok: false, granted: [], missing: [], checking: true,
+  });
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from("tenants").select("id, name, slug").order("name");
       setTenants((data ?? []) as any);
+      const { data: cfg } = await supabase.rpc("get_facebook_config_meta" as any);
+      const row: any = Array.isArray(cfg) ? cfg[0] : cfg;
+      setLastSync(row?.last_campaigns_sync_at ?? null);
     })();
   }, []);
+
+  const checkPermissions = async () => {
+    setPermState(s => ({ ...s, checking: true }));
+    try {
+      const { data, error } = await supabase.functions.invoke("facebook-campaigns-sync", {
+        body: { check_permissions: true },
+      });
+      if (error) throw error;
+      setPermState({
+        ok: !!data?.ok,
+        granted: data?.granted ?? [],
+        missing: data?.missing ?? [],
+        checking: false,
+      });
+    } catch (e: any) {
+      setPermState({ ok: false, granted: [], missing: ["ads_read"], checking: false });
+    }
+  };
+
+  useEffect(() => { checkPermissions(); }, []);
+
+  const syncFacebookAds = async (silent = false) => {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("facebook-campaigns-sync", { body: { days: 30 } });
+      if (error) throw error;
+      if (data?.error) {
+        if (data?.need_reconnect) {
+          toast({ title: "Reconecte o Facebook", description: data.error, variant: "destructive" });
+        } else if (!silent) {
+          toast({ title: "Falha ao sincronizar", description: data.error, variant: "destructive" });
+        }
+        return;
+      }
+      if (!silent) toast({ title: `Sincronizado: ${data?.results?.length ?? 0} campanhas` });
+      setLastSync(new Date().toISOString());
+      load();
+    } catch (e: any) {
+      if (!silent) toast({ title: "Erro ao sincronizar", description: e.message, variant: "destructive" });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // auto-sync if stale (>15min) and permissions ok
+  useEffect(() => {
+    if (!permState.ok || permState.checking) return;
+    const ageMin = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 60000 : 9999;
+    if (ageMin > 15) syncFacebookAds(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permState.ok, permState.checking]);
 
   const load = async () => {
     setLoading(true);
