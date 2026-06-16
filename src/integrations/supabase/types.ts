@@ -464,23 +464,35 @@ export type Database = {
       }
       facebook_webhook_config: {
         Row: {
+          app_secret: string | null
           created_at: string
           id: string
+          last_validated_at: string | null
+          last_validation_result: Json | null
           page_access_token: string | null
+          page_id: string | null
           updated_at: string
           verify_token: string
         }
         Insert: {
+          app_secret?: string | null
           created_at?: string
           id?: string
+          last_validated_at?: string | null
+          last_validation_result?: Json | null
           page_access_token?: string | null
+          page_id?: string | null
           updated_at?: string
           verify_token: string
         }
         Update: {
+          app_secret?: string | null
           created_at?: string
           id?: string
+          last_validated_at?: string | null
+          last_validation_result?: Json | null
           page_access_token?: string | null
+          page_id?: string | null
           updated_at?: string
           verify_token?: string
         }
@@ -1511,6 +1523,19 @@ export type Database = {
     }
     Functions: {
       current_tenant_ids: { Args: never; Returns: string[] }
+      get_facebook_config_meta: {
+        Args: never
+        Returns: {
+          has_app_secret: boolean
+          has_page_access_token: boolean
+          id: string
+          last_validated_at: string
+          last_validation_result: Json
+          page_id: string
+          updated_at: string
+          verify_token: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
