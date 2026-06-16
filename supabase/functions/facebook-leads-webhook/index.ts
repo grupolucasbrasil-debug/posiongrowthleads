@@ -1,39 +1,54 @@
-// Facebook Lead Ads webhook + relay genérico
+// Facebook Lead Ads webhook
 // GET  → verificação do Meta (hub.challenge)
-// POST → recebe leadgen events da Meta OU JSON direto (Zapier/Make/curl)
+// POST → recebe leadgen events da Meta OU JSON direto (curl/manual)
+// Token de página e app_secret são lidos do banco (facebook_webhook_config).
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-hub-signature-256",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const FB_PAGE_TOKEN = Deno.env.get("FACEBOOK_PAGE_ACCESS_TOKEN") ?? "";
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// Hidrata um lead da Meta via Graph API usando o leadgen_id
-async function fetchLeadFromGraph(leadgenId: string) {
-  if (!FB_PAGE_TOKEN) return null;
-  try {
-    const fields = "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id";
-    const url = `https://graph.facebook.com/v21.0/${leadgenId}?fields=${fields}&access_token=${encodeURIComponent(FB_PAGE_TOKEN)}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.error("Graph API error", res.status, await res.text());
-      return null;
-    }
-    return await res.json();
-  } catch (e) {
-    console.error("Graph fetch failed", e);
-    return null;
-  }
+async function loadConfig() {
+  const { data } = await admin
+    .from("facebook_webhook_config")
+    .select("verify_token, page_access_token, app_secret")
+    .limit(1).maybeSingle();
+  return data;
 }
 
-// pega o primeiro valor não-vazio de uma lista de chaves do payload
+async function verifyHubSignature(secret: string, rawBody: string, header: string | null): Promise<boolean> {
+  if (!header?.startsWith("sha256=")) return false;
+  const provided = header.slice("sha256=".length);
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+  const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  // timing-safe compare
+  if (hex.length !== provided.length) return false;
+  let diff = 0;
+  for (let i = 0; i < hex.length; i++) diff |= hex.charCodeAt(i) ^ provided.charCodeAt(i);
+  return diff === 0;
+}
+
+async function fetchLeadFromGraph(leadgenId: string, token: string) {
+  try {
+    const fields = "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id";
+    const url = `https://graph.facebook.com/v21.0/${leadgenId}?fields=${fields}&access_token=${encodeURIComponent(token)}`;
+    const res = await fetch(url);
+    if (!res.ok) { console.error("Graph API error", res.status, await res.text()); return null; }
+    return await res.json();
+  } catch (e) { console.error("Graph fetch failed", e); return null; }
+}
+
 const pick = (obj: Record<string, any>, keys: string[]): string | null => {
   for (const k of keys) {
     const v = obj?.[k];
@@ -42,7 +57,6 @@ const pick = (obj: Record<string, any>, keys: string[]): string | null => {
   return null;
 };
 
-// Normaliza field_data do formato Meta { field_data: [{ name, values: ["foo"] }] }
 function flattenFieldData(arr: any[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!Array.isArray(arr)) return out;
@@ -118,47 +132,55 @@ async function insertLead(payload: Record<string, string>, meta: {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const url = new URL(req.url);
+  const cfg = await loadConfig();
 
   // === Meta verification challenge ===
   if (req.method === "GET") {
     const mode      = url.searchParams.get("hub.mode");
     const token     = url.searchParams.get("hub.verify_token");
     const challenge = url.searchParams.get("hub.challenge");
-
-    const { data: cfg } = await admin
-      .from("facebook_webhook_config").select("verify_token").limit(1).maybeSingle();
-
     if (mode === "subscribe" && token && cfg?.verify_token && token === cfg.verify_token) {
       return new Response(challenge ?? "", { status: 200, headers: corsHeaders });
     }
     return new Response("forbidden", { status: 403, headers: corsHeaders });
   }
 
-  // === POST: receive lead ===
   if (req.method !== "POST") {
     return new Response("method not allowed", { status: 405, headers: corsHeaders });
   }
 
+  const rawBody = await req.text();
+
+  // Validação opcional de assinatura HMAC quando app_secret estiver salvo
+  if (cfg?.app_secret) {
+    const sig = req.headers.get("x-hub-signature-256");
+    const ok = await verifyHubSignature(cfg.app_secret, rawBody, sig);
+    if (!ok) {
+      return new Response(JSON.stringify({ error: "invalid signature" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   let body: any;
-  try { body = await req.json(); }
+  try { body = JSON.parse(rawBody); }
   catch { return new Response(JSON.stringify({ error: "invalid json" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }}); }
 
+  const FB_PAGE_TOKEN = cfg?.page_access_token ?? "";
   const results: any[] = [];
 
-  // Caso 1: Meta webhook { entry: [{ changes: [{ value: { leadgen_id, form_id, page_id, ad_id, campaign_id } }] }] }
   if (Array.isArray(body?.entry)) {
     for (const entry of body.entry) {
       for (const change of entry?.changes ?? []) {
         const v = change?.value ?? {};
         const leadgenId = v.leadgen_id ?? null;
         let flat: Record<string, string> = {};
-        let formName: string | null = null;
         let adName: string | null = null;
         let adsetName: string | null = null;
         let campaignName: string | null = null;
 
-        if (leadgenId) {
-          const full = await fetchLeadFromGraph(String(leadgenId));
+        if (leadgenId && FB_PAGE_TOKEN) {
+          const full = await fetchLeadFromGraph(String(leadgenId), FB_PAGE_TOKEN);
           if (full) {
             flat = flattenFieldData(full.field_data);
             adName = full.ad_name ?? null;
@@ -171,7 +193,7 @@ Deno.serve(async (req) => {
           facebook_lead_id: leadgenId,
           facebook_form_id: v.form_id ?? null,
           facebook_campaign: campaignName ?? v.campaign_id ?? v.ad_id ?? null,
-          facebook_form_name: formName,
+          facebook_form_name: null,
           facebook_ad_name: adName,
           facebook_adset_name: adsetName,
         });

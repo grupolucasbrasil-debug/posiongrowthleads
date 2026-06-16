@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Loader2, Facebook, Copy, RefreshCw, CheckCircle2,
   Upload, FileSpreadsheet, Users, ExternalLink, Zap,
+  AlertCircle, KeyRound, Eye, EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
@@ -86,24 +87,83 @@ function rowToLead(row: ParsedRow) {
 }
 
 /* =====================================================================
-   ABA 1 — Configuração (Verify Token + Webhook URL + Guia Zapier)
+   ABA 1 — Configuração (Credenciais Meta + Webhook + Validação)
    ===================================================================== */
 
+type ConfigMeta = {
+  id: string;
+  verify_token: string;
+  page_id: string | null;
+  has_page_access_token: boolean;
+  has_app_secret: boolean;
+  last_validated_at: string | null;
+  last_validation_result: any;
+  updated_at: string;
+};
+
+type ValidationStep = {
+  id: string;
+  label: string;
+  ok: boolean;
+  level: "ok" | "warn" | "error";
+  message: string;
+  detail?: any;
+};
+
+function StepRow({ step }: { step: ValidationStep }) {
+  const color =
+    step.level === "ok" ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/5"
+    : step.level === "warn" ? "text-amber-300 border-amber-500/30 bg-amber-500/5"
+    : "text-red-400 border-red-500/30 bg-red-500/5";
+  const Icon = step.level === "error" ? AlertCircle : step.level === "warn" ? AlertCircle : CheckCircle2;
+  return (
+    <div className={`rounded-lg border p-3 text-sm ${color}`}>
+      <div className="flex items-start gap-2">
+        <Icon className="w-4 h-4 mt-0.5 shrink-0" />
+        <div className="flex-1">
+          <div className="font-medium">{step.label}</div>
+          <div className="text-xs opacity-80 mt-0.5">{step.message}</div>
+          {step.id === "forms" && Array.isArray(step.detail) && step.detail.length > 0 && (
+            <ul className="text-xs opacity-80 mt-2 space-y-0.5">
+              {step.detail.slice(0, 8).map((f: any) => (
+                <li key={f.id}>• <span className="font-medium">{f.name}</span> · <span className="font-mono opacity-60">{f.id}</span> · {f.status} · {f.leads_count ?? 0} leads</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfigTab() {
-  const [verifyToken, setVerifyToken] = useState("");
-  const [configId, setConfigId] = useState<string | null>(null);
+  const [meta, setMeta] = useState<ConfigMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<any>(null);
+  const [validating, setValidating] = useState(false);
+  const [steps, setSteps] = useState<ValidationStep[] | null>(null);
 
-  useEffect(() => {
-    supabase.from("facebook_webhook_config").select("*").limit(1).maybeSingle()
-      .then(({ data }) => {
-        if (data) { setConfigId(data.id); setVerifyToken(data.verify_token); }
-        setLoading(false);
-      });
-  }, []);
+  // form inputs (apenas para envio — token nunca volta do server)
+  const [verifyToken, setVerifyToken] = useState("");
+  const [pageAccessToken, setPageAccessToken] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [pageId, setPageId] = useState("");
+  const [showPat, setShowPat] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+
+  const loadMeta = async () => {
+    const { data } = await supabase.rpc("get_facebook_config_meta" as any);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row) {
+      setMeta(row as ConfigMeta);
+      setVerifyToken(row.verify_token ?? "");
+      setPageId(row.page_id ?? "");
+      if (row.last_validation_result) setSteps(row.last_validation_result as ValidationStep[]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadMeta(); }, []);
 
   const generateToken = () => {
     const t = Array.from(crypto.getRandomValues(new Uint8Array(24)))
@@ -111,41 +171,50 @@ function ConfigTab() {
     setVerifyToken(t);
   };
 
-  const save = async () => {
-    if (verifyToken.length < 12) { toast.error("Token precisa ter pelo menos 12 caracteres"); return; }
-    setSaving(true);
-    if (configId) {
-      await supabase.from("facebook_webhook_config").update({
-        verify_token: verifyToken, updated_at: new Date().toISOString(),
-      } as any).eq("id", configId);
-    } else {
-      const { data } = await supabase.from("facebook_webhook_config")
-        .insert({ verify_token: verifyToken } as any).select("id").single();
-      if (data) setConfigId(data.id);
-    }
-    setSaving(false);
-    toast.success("Configuração salva");
-  };
-
   const copy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copiado`);
   };
 
-  const runGraphTest = async () => {
-    setTesting(true);
-    setTestResult(null);
+  const saveAll = async () => {
+    if (verifyToken && verifyToken.length < 12) {
+      toast.error("Verify Token precisa ter pelo menos 12 caracteres");
+      return;
+    }
+    setSaving(true);
     try {
-      const { data, error } = await supabase.functions.invoke("facebook-graph-test", { body: {} });
+      const payload: Record<string, any> = {};
+      if (verifyToken) payload.verify_token = verifyToken;
+      if (pageAccessToken) payload.page_access_token = pageAccessToken;
+      if (appSecret) payload.app_secret = appSecret;
+      if (pageId !== (meta?.page_id ?? "")) payload.page_id = pageId;
+
+      const { error } = await supabase.functions.invoke("facebook-config-save", { body: payload });
       if (error) throw error;
-      setTestResult(data);
-      if (data?.ok) toast.success("Token válido");
-      else toast.error(data?.error ?? "Falha no teste");
+      toast.success("Credenciais salvas");
+      setPageAccessToken("");
+      setAppSecret("");
+      await loadMeta();
     } catch (e: any) {
-      toast.error(e.message ?? "Erro ao testar");
-      setTestResult({ ok: false, error: e.message });
+      toast.error(e.message ?? "Erro ao salvar");
     } finally {
-      setTesting(false);
+      setSaving(false);
+    }
+  };
+
+  const runValidation = async () => {
+    setValidating(true);
+    setSteps(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("facebook-webhook-validate", { body: {} });
+      if (error) throw error;
+      setSteps(data.steps as ValidationStep[]);
+      if (data.ok) toast.success("Webhook validado com sucesso");
+      else toast.error("Encontramos problemas na validação — veja abaixo");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao validar");
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -153,157 +222,137 @@ function ConfigTab() {
 
   return (
     <div className="space-y-6">
-      {/* 3 rotas resumidas */}
-      <div className="grid md:grid-cols-3 gap-3">
-        <div className="rounded-xl border border-border/50 bg-card p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Zap className="w-4 h-4 text-amber-400" /> Caminho B — Zapier</div>
-          <p className="text-xs text-muted-foreground mt-1">Rápido, 5 min, sem App Review. <b>Recomendado</b>.</p>
-        </div>
-        <div className="rounded-xl border border-border/50 bg-card/60 p-4">
-          <div className="text-sm font-semibold text-foreground">Caminho A — Webhook Meta</div>
-          <p className="text-xs text-muted-foreground mt-1">Tempo real nativo. Exige App Review (~3–7 dias).</p>
-        </div>
-        <div className="rounded-xl border border-border/50 bg-card/60 p-4">
-          <div className="text-sm font-semibold text-foreground">Caminho C — Polling</div>
-          <p className="text-xs text-muted-foreground mt-1">Edge function busca leads a cada X min via Graph API.</p>
-        </div>
-      </div>
-
       {/* Webhook URL */}
       <div className="bg-card border border-border/50 rounded-xl p-6 space-y-3">
         <h2 className="font-semibold text-foreground">1. URL do Webhook</h2>
-        <p className="text-xs text-muted-foreground">Use esta URL no Zapier/Make ou como Callback URL no app da Meta.</p>
+        <p className="text-xs text-muted-foreground">Use esta URL como <b>Callback URL</b> no painel da Meta (App → Webhooks → Page → leadgen).</p>
         <div className="flex gap-2">
           <Input readOnly value={WEBHOOK_URL} className="font-mono text-xs" />
           <Button variant="outline" onClick={() => copy(WEBHOOK_URL, "URL")}><Copy className="w-4 h-4" /></Button>
         </div>
       </div>
 
-      {/* Verify token (somente Caminho A) */}
+      {/* Verify Token */}
       <div className="bg-card border border-border/50 rounded-xl p-6 space-y-3">
-        <h2 className="font-semibold text-foreground">2. Verify Token <span className="text-xs text-muted-foreground">(somente Caminho A — webhook nativo Meta)</span></h2>
+        <h2 className="font-semibold text-foreground">2. Verify Token</h2>
+        <p className="text-xs text-muted-foreground">String aleatória que a Meta envia no handshake do webhook. Cole o mesmo valor no painel da Meta.</p>
         <div className="flex gap-2">
           <Input value={verifyToken} onChange={(e) => setVerifyToken(e.target.value)} placeholder="cole ou gere um token..." className="font-mono text-xs" />
           <Button variant="outline" onClick={generateToken} title="Gerar token aleatório"><RefreshCw className="w-4 h-4" /></Button>
-          <Button onClick={save} disabled={saving} className="gradient-accent">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            <span className="ml-2">Salvar</span>
-          </Button>
+          <Button variant="outline" onClick={() => copy(verifyToken, "Verify Token")} disabled={!verifyToken}><Copy className="w-4 h-4" /></Button>
         </div>
       </div>
 
-      {/* Testar Graph API */}
-      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-3">
+      {/* Credenciais Meta */}
+      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-foreground flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-accent" /> 3. Credenciais Meta
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Cole aqui o <b>Page Access Token</b> (longa duração, com permissão <code className="bg-muted px-1 rounded">leads_retrieval</code>).
+            Tokens ficam guardados criptografados e <b>nunca</b> aparecem de volta na tela — apenas o status.
+          </p>
+        </div>
+
+        {/* Page Access Token */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-foreground flex items-center gap-2">
+            Page Access Token
+            {meta?.has_page_access_token && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">salvo</Badge>}
+          </label>
+          <div className="flex gap-2">
+            <Input
+              type={showPat ? "text" : "password"}
+              value={pageAccessToken}
+              onChange={(e) => setPageAccessToken(e.target.value)}
+              placeholder={meta?.has_page_access_token ? "•••••••• (deixe vazio para manter)" : "cole o token aqui"}
+              className="font-mono text-xs"
+              autoComplete="off"
+            />
+            <Button variant="outline" onClick={() => setShowPat(s => !s)} type="button">
+              {showPat ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* App Secret */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-foreground flex items-center gap-2">
+            App Secret <span className="opacity-60 font-normal">(opcional — valida X-Hub-Signature-256)</span>
+            {meta?.has_app_secret && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400">salvo</Badge>}
+          </label>
+          <div className="flex gap-2">
+            <Input
+              type={showSecret ? "text" : "password"}
+              value={appSecret}
+              onChange={(e) => setAppSecret(e.target.value)}
+              placeholder={meta?.has_app_secret ? "•••••••• (deixe vazio para manter)" : "cole o app secret aqui"}
+              className="font-mono text-xs"
+              autoComplete="off"
+            />
+            <Button variant="outline" onClick={() => setShowSecret(s => !s)} type="button">
+              {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* Page ID */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-foreground">Page ID <span className="opacity-60 font-normal">(opcional)</span></label>
+          <Input
+            value={pageId}
+            onChange={(e) => setPageId(e.target.value)}
+            placeholder="ex: 102345678901234"
+            className="font-mono text-xs"
+          />
+        </div>
+
+        <Button onClick={saveAll} disabled={saving} className="gradient-accent">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+          <span className="ml-2">Salvar credenciais</span>
+        </Button>
+      </div>
+
+      {/* Validação ponta-a-ponta */}
+      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="font-semibold text-foreground">3. Testar Graph API</h2>
+            <h2 className="font-semibold text-foreground">4. Validar webhook completo</h2>
             <p className="text-xs text-muted-foreground mt-1">
-              Valida o <code className="bg-muted px-1 rounded">FACEBOOK_PAGE_ACCESS_TOKEN</code> e lista os formulários de Lead Ads disponíveis.
+              Executa 6 checagens: Verify Token, handshake da Meta, token de página, permissões, formulários de Lead Ads e App Secret.
             </p>
+            {meta?.last_validated_at && (
+              <p className="text-[11px] text-muted-foreground mt-1 opacity-70">
+                Última validação: {new Date(meta.last_validated_at).toLocaleString("pt-BR")}
+              </p>
+            )}
           </div>
-          <Button onClick={runGraphTest} disabled={testing} className="gradient-accent">
-            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            <span className="ml-2">Testar token</span>
+          <Button onClick={runValidation} disabled={validating} className="gradient-accent">
+            {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            <span className="ml-2">Validar agora</span>
           </Button>
         </div>
 
-        {testResult && (
-          <div className={`rounded-lg border p-4 text-sm ${testResult.ok ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}`}>
-            {!testResult.ok && (
-              <div className="text-red-400">
-                <b>Erro:</b> {testResult.error}
-              </div>
-            )}
-            {testResult.ok && (
-              <div className="space-y-3">
-                <div className="text-emerald-400 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4" /> Token válido ({testResult.tokenType === "page" ? "Page Token" : "User Token"})
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  <b>Conta:</b> {testResult.me?.name} <span className="opacity-60">({testResult.me?.id})</span>
-                  {testResult.me?.category && <> · <b>Categoria:</b> {testResult.me.category}</>}
-                </div>
-
-                {testResult.pages?.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-foreground mb-1">Páginas acessíveis ({testResult.pages.length})</div>
-                    <ul className="text-xs text-muted-foreground space-y-1">
-                      {testResult.pages.map((p: any) => (
-                        <li key={p.id}>• {p.name} <span className="opacity-50">({p.id})</span></li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                <div>
-                  <div className="text-xs font-semibold text-foreground mb-1">
-                    Formulários de Lead Ads ({testResult.forms?.length ?? 0})
-                  </div>
-                  {testResult.formsError && (
-                    <div className="text-xs text-amber-400 mb-2">{testResult.formsError}</div>
-                  )}
-                  {testResult.forms?.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead className="text-muted-foreground">
-                          <tr className="border-b border-border/40">
-                            <th className="text-left py-1 pr-3 font-medium">Form</th>
-                            <th className="text-left py-1 pr-3 font-medium">ID</th>
-                            <th className="text-left py-1 pr-3 font-medium">Status</th>
-                            <th className="text-left py-1 pr-3 font-medium">Leads</th>
-                            {testResult.tokenType === "user" && <th className="text-left py-1 pr-3 font-medium">Página</th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {testResult.forms.map((f: any) => (
-                            <tr key={f.id} className="border-b border-border/20">
-                              <td className="py-1 pr-3 text-foreground">{f.name}</td>
-                              <td className="py-1 pr-3 font-mono opacity-70">{f.id}</td>
-                              <td className="py-1 pr-3">
-                                <Badge variant={f.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px]">{f.status}</Badge>
-                              </td>
-                              <td className="py-1 pr-3">{f.leads_count ?? "—"}</td>
-                              {testResult.tokenType === "user" && <td className="py-1 pr-3 opacity-70">{f.page_name ?? "—"}</td>}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">Nenhum formulário retornado. Verifique permissões <code className="bg-muted px-1 rounded">leads_retrieval</code> + <code className="bg-muted px-1 rounded">pages_show_list</code>.</div>
-                  )}
-                </div>
-              </div>
-            )}
+        {steps && (
+          <div className="space-y-2">
+            {steps.map((s) => <StepRow key={s.id} step={s} />)}
           </div>
         )}
       </div>
 
-      {/* Guia Zapier */}
-
+      {/* Guia rápido */}
       <div className="bg-accent/5 border border-accent/20 rounded-xl p-6 space-y-3">
-        <h2 className="font-semibold text-foreground flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Como conectar via Zapier (5 min)</h2>
+        <h2 className="font-semibold text-foreground">Como configurar no painel da Meta</h2>
         <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-          <li>Entre em <a href="https://zapier.com" target="_blank" rel="noreferrer" className="text-accent underline">zapier.com</a> e crie um novo Zap.</li>
-          <li><b>Trigger:</b> <i>Facebook Lead Ads</i> → <i>New Lead</i>. Conecte sua conta Meta, selecione a Página e o Formulário.</li>
-          <li><b>Action:</b> <i>Webhooks by Zapier</i> → <i>POST</i>.</li>
-          <li>Cole a URL acima em <b>URL</b>. Em <b>Payload Type</b>, escolha <b>JSON</b>.</li>
-          <li>Em <b>Data</b>, mapeie os campos do formulário para estas chaves:
-            <code className="block bg-muted/40 rounded p-2 mt-1 text-xs">full_name, phone_number, email, company_name, form_name, ad_name, adset_name, campaign_name, id</code>
+          <li>Crie um App em <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="text-accent underline">developers.facebook.com</a> (tipo Business) e gere um <b>Page Access Token de longa duração</b> com as permissões <code className="bg-muted px-1 rounded">leads_retrieval</code>, <code className="bg-muted px-1 rounded">pages_show_list</code> e <code className="bg-muted px-1 rounded">pages_manage_metadata</code>.</li>
+          <li>Cole o token (e opcionalmente o App Secret) no formulário acima e clique em <b>Salvar credenciais</b>.</li>
+          <li>No App → <b>Webhooks → Page</b>, adicione subscription para o campo <code className="bg-muted px-1 rounded">leadgen</code>. Use a <b>URL do Webhook</b> (passo 1) e o <b>Verify Token</b> (passo 2).</li>
+          <li>Assine a Página ao App via Graph API:
+            <code className="block bg-muted/40 rounded p-2 mt-1 text-xs break-all">POST /v21.0/&#123;page-id&#125;/subscribed_apps?subscribed_fields=leadgen&access_token=&#123;page_token&#125;</code>
           </li>
-          <li>Teste. O lead deve aparecer aqui em <b>Leads do Facebook</b>.</li>
-        </ol>
-      </div>
-
-      {/* Guia Caminho A */}
-      <div className="bg-card border border-border/50 rounded-xl p-6 space-y-3">
-        <h2 className="font-semibold text-foreground">Como configurar o Webhook nativo da Meta (Caminho A)</h2>
-        <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-          <li>Crie um App em <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="text-accent underline">developers.facebook.com</a> (tipo Business).</li>
-          <li>Em <b>Webhooks → Page</b>, adicione subscription para <code className="bg-muted px-1 rounded">leadgen</code>.</li>
-          <li>Cole a URL acima como <b>Callback URL</b> e o token acima como <b>Verify Token</b>.</li>
-          <li>Solicite as permissões <code className="bg-muted px-1 rounded">leads_retrieval</code> e <code className="bg-muted px-1 rounded">pages_manage_metadata</code> via App Review (~3–7 dias).</li>
-          <li>Após aprovação, gere um <b>Page Access Token de longa duração</b> e me avise — adiciono a hidratação via Graph API.</li>
+          <li>Clique em <b>Validar agora</b> e confira que todos os passos ficaram verdes.</li>
+          <li>Envie o app para <b>App Review</b> (Meta) com as permissões acima — sem isso, só leads de testers chegam.</li>
         </ol>
       </div>
     </div>
@@ -517,7 +566,7 @@ function LeadsTab({ reloadKey }: { reloadKey: number }) {
         </div>
         {leads.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            Nenhum lead do Facebook ainda. Importe um CSV ou configure o Zapier.
+            Nenhum lead do Facebook ainda. Importe um CSV ou configure o webhook nativo da Meta.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -562,7 +611,7 @@ const FacebookConfigPage = () => {
           <Facebook className="w-6 h-6 text-blue-500" /> Facebook Lead Ads
         </h1>
         <p className="text-muted-foreground text-sm">
-          Receba leads de formulários do Facebook direto no Kanban — via Zapier, CSV ou webhook nativo.
+          Receba leads de formulários do Facebook direto no Kanban — via webhook nativo da Meta ou importação CSV.
         </p>
       </div>
 
