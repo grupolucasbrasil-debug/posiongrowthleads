@@ -16,16 +16,21 @@ type Stage =
   | "negociando" | "fechado_ganho" | "fechado_perdido" | "no_show" | "futuro";
 
 const STAGES: { id: Stage; title: string; accent: string; bg: string }[] = [
-  { id: "contato_iniciado",   title: "Contato Iniciado",  accent: "#4F8CFF", bg: "rgba(79,140,255,0.15)" },
-  { id: "qualificando",       title: "Qualificando",      accent: "#A78BFA", bg: "rgba(167,139,250,0.15)" },
-  { id: "avaliacao_agendada", title: "Avaliação Agendada",accent: "#D4AF37", bg: "rgba(212,175,55,0.15)" },
-  { id: "avaliacao_realizada",title: "Avaliação Realizada",accent: "#D4AF37", bg: "rgba(212,175,55,0.22)" },
-  { id: "negociando",         title: "Negociando",        accent: "#F59E0B", bg: "rgba(245,158,11,0.15)" },
-  { id: "fechado_ganho",      title: "Fechado Ganho",     accent: "#22C55E", bg: "rgba(34,197,94,0.15)" },
-  { id: "fechado_perdido",    title: "Fechado Perdido",   accent: "#EF4444", bg: "rgba(239,68,68,0.15)" },
-  { id: "no_show",            title: "No-show",           accent: "#94A3B8", bg: "rgba(148,163,184,0.15)" },
-  { id: "futuro",             title: "Futuro",            accent: "#2DD4BF", bg: "rgba(45,212,191,0.15)" },
+  { id: "contato_iniciado",   title: "Novo",                accent: "#4F8CFF", bg: "rgba(79,140,255,0.15)" },
+  { id: "qualificando",       title: "Qualificado",         accent: "#A78BFA", bg: "rgba(167,139,250,0.15)" },
+  { id: "avaliacao_agendada", title: "Avaliação Agendada",  accent: "#D4AF37", bg: "rgba(212,175,55,0.15)" },
+  { id: "avaliacao_realizada",title: "Compareceu",          accent: "#D4AF37", bg: "rgba(212,175,55,0.22)" },
+  { id: "negociando",         title: "Em Negociação",       accent: "#F59E0B", bg: "rgba(245,158,11,0.15)" },
+  { id: "fechado_ganho",      title: "Fechado Ganho",       accent: "#22C55E", bg: "rgba(34,197,94,0.15)" },
+  { id: "fechado_perdido",    title: "Fechado Perdido",     accent: "#EF4444", bg: "rgba(239,68,68,0.15)" },
+  { id: "no_show",            title: "Sem Resposta",        accent: "#94A3B8", bg: "rgba(148,163,184,0.15)" },
+  { id: "futuro",             title: "Cancelado",           accent: "#64748B", bg: "rgba(100,116,139,0.15)" },
 ];
+
+function daysIn(date: string | null) {
+  if (!date) return 0;
+  return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
+}
 
 type Lead = {
   id: string; full_name: string; whatsapp: string; channel: string | null;
@@ -64,6 +69,19 @@ export default function TenantKanban() {
     setLoading(false);
   }
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [tenant?.id]);
+
+  // Realtime: outros usuários veem mudanças instantaneamente
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const channel = supabase
+      .channel(`clinic_leads_${tenant.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "clinic_leads", filter: `tenant_id=eq.${tenant.id}` },
+        () => loadAll())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+    // eslint-disable-next-line
+  }, [tenant?.id]);
 
   async function moveLead(id: string, stage: Stage) {
     const lead = leads.find((l) => l.id === id);
@@ -163,7 +181,12 @@ export default function TenantKanban() {
                   )}
                   <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground">
                     <span>{l.first_contact_date ? new Date(l.first_contact_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</span>
-                    {l.sale_amount ? <span className="font-semibold text-foreground">{BRL(Number(l.sale_amount))}</span> : null}
+                    <div className="flex items-center gap-1.5">
+                      {daysIn(l.created_at) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-white/5">{daysIn(l.created_at)}d</span>
+                      )}
+                      {l.sale_amount ? <span className="font-semibold text-foreground">{BRL(Number(l.sale_amount))}</span> : null}
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -265,6 +288,9 @@ function WinSaleDialog({ lead, tenantId, onClose, onSaved }: {
   const [amount, setAmount] = useState("");
   const [product, setProduct] = useState("");
   const [seller, setSeller] = useState("");
+  const [payment, setPayment] = useState("PIX");
+  const [scheduled, setScheduled] = useState("");
+  const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -272,22 +298,40 @@ function WinSaleDialog({ lead, tenantId, onClose, onSaved }: {
       setAmount(lead.sale_amount ? String(lead.sale_amount) : "");
       setProduct(lead.procedure_interest || "");
       setSeller(lead.seller_name || "");
+      setPayment("PIX");
+      setScheduled("");
+      setNotes("");
     }
   }, [lead]);
 
   async function save() {
     if (!lead) return;
     const amt = Number(amount);
-    if (!amt || amt <= 0) { toast.error("Informe um valor válido"); return; }
+    if (!amt || amt <= 0) { toast.error("Informe um valor válido (> 0)"); return; }
+    if (!product) { toast.error("Selecione o procedimento"); return; }
+
+    // evita venda duplicada
+    const { data: dup } = await supabase
+      .from("sales").select("id").eq("clinic_lead_id", lead.id).limit(1).maybeSingle();
+    if (dup) { toast.error("Já existe uma venda registrada para este lead"); return; }
+
     setSaving(true);
     const today = new Date().toISOString().slice(0, 10);
     const [u1, u2] = await Promise.all([
       supabase.from("clinic_leads").update({ stage: "fechado_ganho", sale_amount: amt }).eq("id", lead.id),
       supabase.from("sales").insert({
-        tenant_id: tenantId, patient_name: lead.full_name, product: product || "—",
-        seller_name: seller || "—", channel: lead.channel, amount: amt,
-        sale_date: today, first_contact_date: lead.first_contact_date,
+        tenant_id: tenantId,
+        clinic_lead_id: lead.id,
+        patient_name: lead.full_name,
+        product, procedure_name: product,
+        seller_name: seller || "—",
+        channel: lead.channel, channel_origin: lead.channel,
+        amount: amt, sale_date: today,
+        scheduled_date: scheduled || null,
+        payment_method: payment,
+        first_contact_date: lead.first_contact_date,
         attended: "SIM", international: lead.international,
+        notes: notes || null,
       }),
     ]);
     setSaving(false);
@@ -300,25 +344,40 @@ function WinSaleDialog({ lead, tenantId, onClose, onSaved }: {
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Registrar venda — {lead?.full_name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div><Label>Valor da venda *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Valor (R$) *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" /></div>
+            <div>
+              <Label>Forma pagto</Label>
+              <Select value={payment} onValueChange={setPayment}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["PIX","Cartão","Boleto","Dinheiro","Crédito Recorrente","Outros"].map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <div>
-            <Label>Produto</Label>
+            <Label>Procedimento *</Label>
             <Select value={product} onValueChange={setProduct}>
               <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent>{PRODUCTS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          <div>
-            <Label>Vendedor</Label>
-            <Select value={seller} onValueChange={setSeller}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>{SELLERS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Vendedor</Label>
+              <Select value={seller} onValueChange={setSeller}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>{SELLERS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label>Data procedimento</Label><Input type="date" value={scheduled} onChange={(e) => setScheduled(e.target.value)} /></div>
           </div>
+          <div><Label>Notas</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações..." /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar venda"}</Button>
+          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirmar venda"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
