@@ -1,5 +1,5 @@
-// Salva credenciais Meta (Page Access Token, App Secret, Page ID, Verify Token)
-// na tabela facebook_webhook_config. Apenas admins.
+// Salva a página selecionada pelo usuário (id, nome, page_access_token) no banco
+// e inscreve automaticamente o app na página para o campo `leadgen`.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -14,9 +14,6 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.method !== "POST") {
-    return new Response("method not allowed", { status: 405, headers: corsHeaders });
-  }
 
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -24,18 +21,16 @@ Deno.serve(async (req) => {
       status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
   });
-  const token = authHeader.replace("Bearer ", "");
-  const { data: claims, error: authErr } = await userClient.auth.getClaims(token);
+  const tokenJwt = authHeader.replace("Bearer ", "");
+  const { data: claims, error: authErr } = await userClient.auth.getClaims(tokenJwt);
   if (authErr || !claims?.claims) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
   const { data: roleOk } = await admin.rpc("has_role", {
     _user_id: claims.claims.sub, _role: "admin",
@@ -54,36 +49,31 @@ Deno.serve(async (req) => {
     });
   }
 
-  // monta patch só com campos enviados (não-vazios)
-  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
-  const setIf = (k: string, v: any) => {
-    if (typeof v === "string" && v.trim()) patch[k] = v.trim();
-  };
-  setIf("page_access_token", body.page_access_token);
-  setIf("app_secret", body.app_secret);
-  setIf("app_id", body.app_id);
-  setIf("page_id", body.page_id);
-  setIf("verify_token", body.verify_token);
-
-  // remoções explícitas
-  if (body.clear_page_access_token === true) {
-    patch.page_access_token = null;
-    patch.token_expires_at = null;
-    patch.connected_page_name = null;
+  const pageId = String(body?.page_id ?? "").trim();
+  const pageName = String(body?.page_name ?? "").trim();
+  const pageAccessToken = String(body?.page_access_token ?? "").trim();
+  if (!pageId || !pageAccessToken) {
+    return new Response(JSON.stringify({ error: "page_id e page_access_token são obrigatórios" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
-  if (body.clear_app_secret === true) patch.app_secret = null;
 
   const { data: existing } = await admin
     .from("facebook_webhook_config").select("id").limit(1).maybeSingle();
 
-  let id: string;
+  // 60 dias de validade — Page Token derivado de long-lived user token costuma não expirar,
+  // mas guardamos uma data de "checagem" defensiva
+  const expiresAt = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
+
+  const patch = {
+    page_id: pageId,
+    connected_page_name: pageName || null,
+    page_access_token: pageAccessToken,
+    token_expires_at: expiresAt,
+    updated_at: new Date().toISOString(),
+  };
+
   if (existing) {
-    if (!patch.verify_token && Object.keys(patch).length === 1) {
-      // nada além do updated_at
-      return new Response(JSON.stringify({ ok: true, id: existing.id, noop: true }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
     const { error } = await admin
       .from("facebook_webhook_config").update(patch).eq("id", existing.id);
     if (error) {
@@ -91,24 +81,32 @@ Deno.serve(async (req) => {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    id = existing.id;
   } else {
-    if (!patch.verify_token) {
-      return new Response(JSON.stringify({ error: "verify_token obrigatório na primeira configuração" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const { data, error } = await admin
-      .from("facebook_webhook_config").insert(patch).select("id").single();
-    if (error || !data) {
-      return new Response(JSON.stringify({ error: error?.message ?? "insert failed" }), {
+    const { error } = await admin
+      .from("facebook_webhook_config").insert(patch);
+    if (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    id = data.id;
   }
 
-  return new Response(JSON.stringify({ ok: true, id }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  // Subscribe app to page for leadgen field (best-effort; falha não bloqueia)
+  let subscribed = false;
+  let subscribeError: string | null = null;
+  try {
+    const subUrl = new URL(`https://graph.facebook.com/v21.0/${pageId}/subscribed_apps`);
+    subUrl.searchParams.set("subscribed_fields", "leadgen");
+    subUrl.searchParams.set("access_token", pageAccessToken);
+    const r = await fetch(subUrl, { method: "POST" });
+    const j = await r.json();
+    if (r.ok && j.success) subscribed = true;
+    else subscribeError = j?.error?.message ?? `HTTP ${r.status}`;
+  } catch (e: any) {
+    subscribeError = e.message;
+  }
+
+  return new Response(JSON.stringify({
+    ok: true, subscribed, subscribeError,
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
