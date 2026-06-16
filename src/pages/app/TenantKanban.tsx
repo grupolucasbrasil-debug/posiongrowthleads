@@ -70,6 +70,19 @@ export default function TenantKanban() {
   }
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [tenant?.id]);
 
+  // Realtime: outros usuários veem mudanças instantaneamente
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const channel = supabase
+      .channel(`clinic_leads_${tenant.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "clinic_leads", filter: `tenant_id=eq.${tenant.id}` },
+        () => loadAll())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+    // eslint-disable-next-line
+  }, [tenant?.id]);
+
   async function moveLead(id: string, stage: Stage) {
     const lead = leads.find((l) => l.id === id);
     if (!lead || lead.stage === stage) return;
