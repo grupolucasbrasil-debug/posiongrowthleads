@@ -67,7 +67,7 @@ async function insertLead(payload: Record<string, string>, meta: {
   const notesParts: string[] = [];
   if (instagram) notesParts.push(`Instagram: ${instagram}`);
   if (trafego)   notesParts.push(`Tráfego pago: ${trafego}`);
-  const notes = notesParts.length ? notesParts.join(" | ") : null;
+  const observacoes = notesParts.length ? notesParts.join(" | ") : null;
 
   const { data, error } = await admin.from("leads").insert({
     nome_completo: nome ?? "Lead Facebook Ads",
