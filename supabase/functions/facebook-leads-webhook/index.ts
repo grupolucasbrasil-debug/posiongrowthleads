@@ -122,7 +122,7 @@ export async function insertLead(payload: Record<string, string>, meta: {
   if (trafego)   notesParts.push(`Tráfego pago: ${trafego}`);
   const observacoes = notesParts.length ? notesParts.join(" | ") : null;
 
-  const { data, error } = await admin.from("leads").insert({
+  const insertPayload: any = {
     nome_completo: nome ?? "Lead Facebook Ads",
     whatsapp: whatsapp ?? "",
     email,
@@ -145,7 +145,10 @@ export async function insertLead(payload: Record<string, string>, meta: {
     utm_campaign: meta.facebook_campaign ?? null,
     utm_content: meta.facebook_ad_name ?? null,
     utm_term: meta.facebook_adset_name ?? null,
-  }).select("id").single();
+  };
+  if (meta.tenant_id) insertPayload.tenant_id = meta.tenant_id;
+
+  const { data, error } = await admin.from("leads").insert(insertPayload).select("id").single();
 
   if (error) {
     console.error("[webhook] Erro ao salvar lead:", error.message, error.details ?? "");
