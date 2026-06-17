@@ -164,8 +164,10 @@ Deno.serve(async (req) => {
           facebook_adset_name: lead.adset_name ?? null,
           observacoes: observacoesParts.length ? observacoesParts.join(" | ") : null,
           utm_source: "facebook",
-          utm_medium: "lead_ads",
-          utm_campaign: lead.campaign_name ?? lead.ad_name ?? null,
+          utm_medium: "paid",
+          utm_campaign: lead.campaign_name ?? null,
+          utm_content: lead.ad_name ?? null,
+          utm_term: lead.adset_name ?? null,
           created_at: lead.created_time ?? undefined,
         });
         if (error) {
