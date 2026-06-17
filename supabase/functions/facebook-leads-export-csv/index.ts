@@ -212,8 +212,10 @@ Deno.serve(async (req) => {
         is_organic: isOrganic,
         observacoes: obs.length ? obs.join(" | ") : null,
         utm_source: "facebook",
-        utm_medium: isOrganic ? "organic" : "lead_ads",
-        utm_campaign: campaignName ?? adName ?? null,
+        utm_medium: isOrganic ? "organic" : "paid",
+        utm_campaign: campaignName ?? null,
+        utm_content: adName ?? null,
+        utm_term: adsetName ?? null,
         created_at: createdTime && !isNaN(Date.parse(createdTime))
           ? new Date(createdTime).toISOString()
           : undefined,
