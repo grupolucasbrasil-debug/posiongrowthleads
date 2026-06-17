@@ -168,8 +168,9 @@ Deno.serve(async (req) => {
           utm_campaign: lead.campaign_name ?? null,
           utm_content: lead.ad_name ?? null,
           utm_term: lead.adset_name ?? null,
+          tenant_id: (cfg as any)?.default_tenant_id ?? null,
           created_at: lead.created_time ?? undefined,
-        });
+        } as any);
         if (error) {
           console.error("[backfill] erro insert:", error.message);
           failed++;
