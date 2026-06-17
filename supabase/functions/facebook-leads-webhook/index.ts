@@ -250,6 +250,7 @@ Deno.serve(async (req) => {
           facebook_form_name: null,
           facebook_ad_name: adName,
           facebook_adset_name: adsetName,
+          tenant_id: (cfg as any)?.default_tenant_id ?? null,
         });
         results.push(r);
 
@@ -271,6 +272,7 @@ Deno.serve(async (req) => {
       facebook_form_name: body.form_name ?? null,
       facebook_ad_name: body.ad_name ?? null,
       facebook_adset_name: body.adset_name ?? null,
+      tenant_id: (cfg as any)?.default_tenant_id ?? null,
     });
     results.push(r);
   } else {
@@ -281,6 +283,7 @@ Deno.serve(async (req) => {
       facebook_form_name: body.form_name ?? null,
       facebook_ad_name: body.ad_name ?? null,
       facebook_adset_name: body.adset_name ?? null,
+      tenant_id: (cfg as any)?.default_tenant_id ?? null,
     });
     results.push(r);
   }
