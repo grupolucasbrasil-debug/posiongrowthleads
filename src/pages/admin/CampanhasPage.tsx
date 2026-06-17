@@ -139,13 +139,13 @@ export default function CampanhasPage() {
     }
   };
 
-  // auto-sync if stale (>15min) and permissions ok
+  // auto-sync if stale (>15min) and permissions ok and ad account real
   useEffect(() => {
-    if (!permState.ok || permState.checking) return;
+    if (!adAccountConfigured || !permState.ok || permState.checking) return;
     const ageMin = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 60000 : 9999;
     if (ageMin > 15) syncFacebookAds(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permState.ok, permState.checking]);
+  }, [permState.ok, permState.checking, adAccountConfigured]);
 
   const load = async () => {
     setLoading(true);
