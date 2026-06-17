@@ -8,10 +8,13 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+} from "@/components/ui/accordion";
+import {
   Loader2, Facebook, Copy, RefreshCw, CheckCircle2,
   Upload, FileSpreadsheet, Users, ExternalLink, Zap,
   AlertCircle, KeyRound, Eye, EyeOff, LogIn, Unplug,
-  Download, Bug,
+  Download, Bug, Settings2, Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
