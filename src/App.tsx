@@ -16,6 +16,7 @@ import CreateUserPage from "./pages/admin/CreateUserPage";
 import QualificacaoPage from "./pages/admin/QualificacaoPage";
 import FacebookConfigPage from "./pages/admin/FacebookConfigPage";
 import CampanhasPage from "./pages/admin/CampanhasPage";
+import MetaAdsManagerPage from "./pages/admin/MetaAdsManagerPage";
 import AppointmentsPage from "./pages/admin/AppointmentsPage";
 import TenantsPage from "./pages/admin/TenantsPage";
 import ContractsPage from "./pages/admin/ContractsPage";
@@ -69,6 +70,7 @@ const App = () => (
           <Route path="/admin/qualificacao" element={<AdminLayout><QualificacaoPage /></AdminLayout>} />
           <Route path="/admin/facebook" element={<AdminLayout><FacebookConfigPage /></AdminLayout>} />
           <Route path="/admin/campanhas" element={<AdminLayout><CampanhasPage /></AdminLayout>} />
+          <Route path="/admin/meta-ads" element={<AdminLayout><MetaAdsManagerPage /></AdminLayout>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
